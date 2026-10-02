@@ -4,6 +4,20 @@ from discord import app_commands
 from bot.config import Config
 
 COLOR = 0x00B894
+ROW_SIZE = 5
+
+# (etiqueta, emoji, url). Se reparten en filas de 5 debajo de los Notion.
+RESOURCES = [
+    ("Exploit-DB", "💥", "https://www.exploit-db.com/"),
+    ("GTFOBins", "🐧", "https://gtfobins.github.io/"),
+    ("LOLBAS", "🪟", "https://lolbas-project.github.io/"),
+    ("HackTricks", "📖", "https://book.hacktricks.wiki/"),
+    ("PayloadsAllTheThings", "🧨", "https://swisskyrepo.github.io/PayloadsAllTheThings/"),
+    ("RevShells", "🐚", "https://www.revshells.com/"),
+    ("CyberChef", "🍳", "https://gchq.github.io/CyberChef/"),
+    ("CrackStation", "🔓", "https://crackstation.net/"),
+    ("WADComs", "🏰", "https://wadcoms.github.io/"),
+]
 
 
 def build_panel(config: Config) -> tuple[discord.Embed, discord.ui.View]:
@@ -14,15 +28,20 @@ def build_panel(config: Config) -> tuple[discord.Embed, discord.ui.View]:
             "📘 **eJPT**: apuntes y laboratorios\n"
             "📕 **eCPPT**: apuntes y laboratorios\n"
             "👥 **Grupo**: organización, tareas y notas comunes\n\n"
+            "🛠️ **Para la competición**: exploits, escalada de privilegios, "
+            "payloads, reverse shells y hashes\n\n"
             "¿Dudas? Pregunta al modelo del grupo con `/ia`."
         ),
         color=COLOR,
     )
     # Botones de enlace: no generan interacciones, siguen funcionando con el bot apagado
     view = discord.ui.View(timeout=None)
-    view.add_item(discord.ui.Button(label="eJPT", emoji="📘", url=config.notion_ejpt_url))
-    view.add_item(discord.ui.Button(label="eCPPT", emoji="📕", url=config.notion_ecppt_url))
-    view.add_item(discord.ui.Button(label="Grupo", emoji="👥", url=config.notion_grupo_url))
+    view.add_item(discord.ui.Button(label="eJPT", row=0, emoji="📘", url=config.notion_ejpt_url))
+    view.add_item(discord.ui.Button(label="eCPPT", row=0, emoji="📕", url=config.notion_ecppt_url))
+    view.add_item(discord.ui.Button(label="Grupo", row=0, emoji="👥", url=config.notion_grupo_url))
+    for index, (label, emoji, url) in enumerate(RESOURCES):
+        row = 1 + index // ROW_SIZE
+        view.add_item(discord.ui.Button(label=label, emoji=emoji, url=url, row=row))
     return embed, view
 
 

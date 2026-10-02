@@ -7,7 +7,7 @@ y el grupo, y un comando `/ia` conectado a un modelo local en LM Studio.
 
 | Comando | Qué hace |
 |---|---|
-| `/panel` | Publica el mensaje principal con los tres botones. Requiere "Gestionar servidor". |
+| `/panel` | Publica el mensaje principal: botones a los tres Notion y a los recursos de competición (Exploit-DB, GTFOBins, HackTricks…). Requiere "Gestionar servidor". |
 | `/ia mensaje:<texto>` | Pregunta al modelo de LM Studio. Sin memoria, 10 s de espera por usuario. |
 | `/help` | Lista los comandos. |
 
@@ -67,10 +67,14 @@ echo "LMSTUDIO_BASE_URL=http://$(ip route show default | awk '{print $3}'):1234/
 ## 5. Probar en Discord
 
 1. `/help` muestra los tres comandos.
-2. `/panel` publica el mensaje y los tres botones abren su Notion.
+2. `/panel` publica el mensaje; los botones abren los Notion y los recursos.
 3. `/ia mensaje:¿qué es nmap?` responde con el modelo.
 4. Con el servidor de LM Studio parado, `/ia` avisa de que el modelo no está
    disponible.
+
+## Añadir recursos al panel
+
+Edita la lista `RESOURCES` de `bot/panel.py` (máximo 20) y vuelve a lanzar `/panel`.
 
 ## Tests
 

@@ -4,7 +4,7 @@ from discord import app_commands
 from bot.panel import COLOR
 
 COMMANDS = [
-    ("/panel", "Publica el mensaje principal con los enlaces a los Notion. Solo administración."),
+    ("/panel", "Publica el mensaje principal con los Notion y los recursos de competición. Solo administración."),
     ("/ia", "Pregunta al modelo local del grupo. Cada pregunta es independiente."),
     ("/help", "Muestra esta ayuda."),
 ]
