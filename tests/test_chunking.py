@@ -64,3 +64,13 @@ def test_format_reply_flattens_and_truncates_long_questions():
     assert quote.startswith("> uno dos ")
     assert len(quote) == 202
     assert quote.endswith("…")
+
+
+def test_indentation_survives_a_chunk_boundary():
+    lines = [f"    linea {i:02d}" for i in range(12)]
+    text = "```\n" + "\n".join(lines) + "\n```"
+    chunks = chunk_text(text, limit=48)
+    assert len(chunks) > 1
+    assert all(len(chunk) <= 48 for chunk in chunks)
+    body = "\n".join(chunk[4:-4] for chunk in chunks)
+    assert body == "\n".join(lines)

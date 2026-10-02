@@ -12,6 +12,9 @@ from bot.lmstudio import LMStudioClient, LMStudioError
 log = logging.getLogger(__name__)
 
 COOLDOWN_SECONDS = 10
+# Una pregunta en curso más las que esperan; acota la espera muy por debajo de los
+# 15 minutos que dura el token de la interacción
+MAX_PENDING = 4
 QUESTION_LIMIT = 1000
 SYSTEM_PROMPT = (
     "Eres el asistente de un grupo que prepara las certificaciones eJPT y eCPPT "
@@ -37,10 +40,13 @@ def _split(text: str, limit: int) -> list[str]:
             cut = rest.rfind(" ", 0, limit + 1)
         if cut <= 0:
             cut = limit
-        pieces.append(rest[:cut].rstrip())
-        rest = rest[cut:].lstrip()
-    if rest:
-        pieces.append(rest)
+        piece = rest[:cut].rstrip()
+        if piece:
+            pieces.append(piece)
+        # Se descarta solo el separador del corte: la sangría de la línea siguiente se conserva
+        rest = rest[cut + 1 :] if rest[cut] == " " else rest[cut:].lstrip("\n")
+    if rest.strip():
+        pieces.append(rest.rstrip())
     return pieces
 
 
@@ -91,8 +97,28 @@ class Cooldown:
         self._last.pop(user_id, None)
 
 
+class Admission:
+    """Limita las preguntas pendientes: una por usuario y `max_pending` en total."""
+
+    def __init__(self, max_pending: int):
+        self._max_pending = max_pending
+        self._users: set[int] = set()
+
+    def try_enter(self, user_id: int) -> str | None:
+        if user_id in self._users:
+            return "Ya tienes una pregunta en curso. Espera a que termine."
+        if len(self._users) >= self._max_pending:
+            return "El modelo está ocupado ahora mismo. Inténtalo en un momento."
+        self._users.add(user_id)
+        return None
+
+    def leave(self, user_id: int) -> None:
+        self._users.discard(user_id)
+
+
 def register(tree: app_commands.CommandTree, client: LMStudioClient) -> None:
     cooldown = Cooldown(COOLDOWN_SECONDS)
+    admission = Admission(MAX_PENDING)
     lock = asyncio.Lock()
     no_mentions = discord.AllowedMentions.none()
 
@@ -102,6 +128,17 @@ def register(tree: app_commands.CommandTree, client: LMStudioClient) -> None:
         interaction: discord.Interaction,
         mensaje: app_commands.Range[str, 1, QUESTION_LIMIT],
     ):
+        user_id = interaction.user.id
+        refusal = admission.try_enter(user_id)
+        if refusal:
+            await interaction.response.send_message(refusal, ephemeral=True)
+            return
+        try:
+            await answer_question(interaction, mensaje)
+        finally:
+            admission.leave(user_id)
+
+    async def answer_question(interaction: discord.Interaction, mensaje: str) -> None:
         user_id = interaction.user.id
         remaining = cooldown.remaining(user_id)
         if remaining > 0:

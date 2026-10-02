@@ -122,3 +122,28 @@ async def test_closed_port_is_unavailable():
     client = LMStudioClient(f"http://127.0.0.1:{unused_port()}/v1", timeout=2)
     with pytest.raises(LMStudioUnavailable):
         await client.chat("s", "u")
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "razono sin etiqueta de apertura</think>\n\nrespuesta",
+        "<THINK>razono</THINK>respuesta",
+        "<think>uno</think>respuesta<think>me cortan a medias",
+    ],
+)
+async def test_strips_malformed_think_blocks(serve, content):
+    async def handler(request):
+        return web.json_response(ok_body(content))
+
+    client = LMStudioClient(await serve(handler))
+    assert await client.chat("s", "u") == "respuesta"
+
+
+async def test_unclosed_think_without_answer_is_bad_response(serve):
+    async def handler(request):
+        return web.json_response(ok_body("<think>razono y me cortan"))
+
+    client = LMStudioClient(await serve(handler))
+    with pytest.raises(LMStudioBadResponse):
+        await client.chat("s", "u")

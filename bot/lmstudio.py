@@ -3,7 +3,18 @@ import re
 
 import aiohttp
 
-_THINK = re.compile(r"<think>.*?</think>", re.DOTALL)
+_FLAGS = re.DOTALL | re.IGNORECASE
+_THINK_PAIR = re.compile(r"<think>.*?</think>", _FLAGS)
+# Cierre sin apertura: la plantilla del modelo puso <think> en el prompt
+_THINK_ORPHAN_CLOSE = re.compile(r"^.*</think>", _FLAGS)
+# Apertura sin cierre: la generación se cortó a medio razonar
+_THINK_UNCLOSED = re.compile(r"<think>.*$", _FLAGS)
+
+
+def _strip_reasoning(content: str) -> str:
+    for pattern in (_THINK_PAIR, _THINK_ORPHAN_CLOSE, _THINK_UNCLOSED):
+        content = pattern.sub("", content)
+    return content.strip()
 
 
 class LMStudioError(Exception):
@@ -44,7 +55,7 @@ class LMStudioClient:
             raise LMStudioBadResponse("respuesta sin choices") from exc
         if not isinstance(content, str):
             raise LMStudioBadResponse("contenido no textual")
-        content = _THINK.sub("", content).strip()
+        content = _strip_reasoning(content)
         if not content:
             raise LMStudioBadResponse("contenido vacío")
         return content
