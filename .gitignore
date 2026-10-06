@@ -3,3 +3,5 @@
 .venv-wsl/
 __pycache__/
 .pytest_cache/
+ia_history.db
+*.db

@@ -10,6 +10,7 @@ from bot import help as help_command
 from bot import aiinit, ia, panel
 from bot.config import Config, ConfigError, load_config
 from bot.lmstudio import LMStudioClient
+from bot.memory import ConversationStore
 
 log = logging.getLogger(__name__)
 
@@ -67,9 +68,10 @@ def build_bot(config: Config) -> Bot:
         config.lmstudio_base_url, config.lmstudio_model, config.lmstudio_timeout,
         max_tokens=config.lmstudio_max_tokens,
     )
+    store = ConversationStore(config.ia_db_path)
     panel.register(bot.tree, config)
     bot.initializer = aiinit.ModelInitializer(client, config.lmstudio_base_url, config.lmstudio_model)
-    ia.register(bot.tree, client, bot.initializer.lock)
+    ia.register(bot.tree, client, store, config.ia_history_tokens, bot.initializer.lock)
     aiinit.register(bot.tree, bot.initializer)
     help_command.register(bot.tree)
     return bot

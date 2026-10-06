@@ -17,13 +17,19 @@ CONFIG = Config(
 )
 
 
-def test_bot_registers_all_commands():
-    bot = build_bot(CONFIG)
-    assert {command.name for command in bot.tree.get_commands()} == {"panel", "ia", "initai", "help"}
+def db_config(tmp_path, **changes):
+    return replace(CONFIG, ia_db_path=str(tmp_path / "ia.db"), **changes)
 
 
-def test_bot_never_mentions_and_uses_no_privileged_intents():
-    bot = build_bot(CONFIG)
+def test_bot_registers_all_commands(tmp_path):
+    bot = build_bot(db_config(tmp_path))
+    assert {command.name for command in bot.tree.get_commands()} == {
+        "panel", "ia", "ia-reset", "initai", "help",
+    }
+
+
+def test_bot_never_mentions_and_uses_no_privileged_intents(tmp_path):
+    bot = build_bot(db_config(tmp_path))
     mentions = bot.allowed_mentions
     assert (mentions.everyone, mentions.users, mentions.roles) == (False, False, False)
     assert not bot.intents.message_content
@@ -31,8 +37,8 @@ def test_bot_never_mentions_and_uses_no_privileged_intents():
     assert not bot.intents.presences
 
 
-def test_ia_message_option_is_bounded():
-    bot = build_bot(CONFIG)
+def test_ia_message_option_is_bounded(tmp_path):
+    bot = build_bot(db_config(tmp_path))
     option = bot.tree.get_command("ia").parameters[0]
     assert option.name == "mensaje"
     assert option.required
@@ -41,8 +47,8 @@ def test_ia_message_option_is_bounded():
 
 
 @pytest.mark.parametrize("fails", [False, True])
-async def test_startup_runs_auto_init_and_survives_model_failure(fails):
-    bot = build_bot(replace(CONFIG, lmstudio_auto_init=True))
+async def test_startup_runs_auto_init_and_survives_model_failure(fails, tmp_path):
+    bot = build_bot(db_config(tmp_path, lmstudio_auto_init=True))
     initialize = AsyncMock(return_value="correcto")
     if fails:
         initialize.side_effect = InitializationError("apagado")
@@ -50,3 +56,9 @@ async def test_startup_runs_auto_init_and_survives_model_failure(fails):
     bot.tree.sync = AsyncMock(return_value=[])
     await bot.setup_hook()
     initialize.assert_awaited_once()
+
+
+def test_build_bot_registers_reset_command(tmp_path):
+    bot = build_bot(db_config(tmp_path))
+    names = {c.name for c in bot.tree.get_commands()}
+    assert {"ia", "ia-reset", "panel", "help", "initai"} <= names

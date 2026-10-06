@@ -8,7 +8,8 @@ y el grupo, y un comando `/ia` conectado a un modelo local en LM Studio.
 | Comando | Qué hace |
 |---|---|
 | `/panel` | Publica el mensaje principal: botones a los tres Notion y a los recursos de competición (Exploit-DB, GTFOBins, HackTricks…). Requiere "Gestionar servidor". |
-| `/ia mensaje:<texto>` | Pregunta al modelo de LM Studio. Sin memoria, 10 s de espera por usuario, una pregunta en curso por persona y 4 pendientes como máximo. |
+| `/ia mensaje:<texto>` | Pregunta al modelo de LM Studio. Con memoria por canal, respuesta en streaming, 10 s de espera por usuario, una pregunta en curso por persona y 4 pendientes como máximo. |
+| `/ia-reset` | Borra la memoria de conversación del canal actual. |
 | `/initai` | Comprueba y aplica el preset de Qwythos; carga o recarga solo si hace falta. Requiere "Gestionar servidor". |
 | `/help` | Lista los comandos. |
 
@@ -39,6 +40,8 @@ Copia `.env.example` a `.env` y rellénalo:
 | `LMSTUDIO_TIMEOUT` | Opcional. Segundos de espera, por defecto `120`. |
 | `LMSTUDIO_MAX_TOKENS` | Opcional. Límite de generación, incluido razonamiento, por defecto `8192`. |
 | `LMSTUDIO_AUTO_INIT` | Opcional. `true` configura el modelo al arrancar el bot; por defecto `false`. |
+| `IA_HISTORY_TOKENS` | Opcional. Presupuesto de tokens de historial que se envía al modelo, por defecto `3000`. |
+| `IA_DB_PATH` | Opcional. Fichero SQLite de la memoria, por defecto `ia_history.db`. |
 
 ## 3. Arrancar LM Studio
 
@@ -105,13 +108,25 @@ del archivo no incluye caché de contexto ni memoria de ejecución. Aumentar
 contexto o generación puede requerir más memoria y tiempo. No configures
 el millón de tokens anunciado para este uso.
 
-`/ia` acepta hasta 4000 caracteres. Cada pregunta es independiente y la respuesta
-es pública: incluye objetivo, plataforma y evidencias relevantes en la misma
-pregunta. Procesa una petición a la vez, admite cuatro entre activas y pendientes,
+`/ia` acepta hasta 4000 caracteres y la respuesta es pública. Incluye objetivo,
+plataforma y evidencias relevantes en la pregunta. Procesa una petición a la vez, admite cuatro entre activas y pendientes,
 y limita a 600 segundos la espera total por petición, incluida la cola, para
 dejar margen antes de caducar la interacción de Discord. El timeout HTTP sigue
 siendo `LMSTUDIO_TIMEOUT`. El bot propone pasos; no ejecuta comandos ni consulta
 Internet o archivos.
+
+### Memoria por canal y streaming
+
+Cada canal tiene su propia conversación: `/ia` envía al modelo los turnos
+recientes de ese canal, recortados para no superar `IA_HISTORY_TOKENS`. La
+memoria se guarda en SQLite (`IA_DB_PATH`), así que sobrevive a reinicios del
+bot. `/ia-reset` la borra para el canal actual. Bajo WSL la base de datos se
+crea en el directorio de trabajo salvo que fijes `IA_DB_PATH`; `ia_history.db`
+está en `.gitignore`.
+
+La respuesta se muestra en streaming: un mensaje de vista previa se va
+actualizando mientras el modelo genera y, al terminar, se sustituye por la
+respuesta final con formato.
 
 Las respuestas largas se dividen en mensajes de hasta 2000 unidades UTF-16,
 conservando el lenguaje y la sangría de los bloques de código. Si hay varias
@@ -159,7 +174,7 @@ echo "LMSTUDIO_BASE_URL=http://$(ip route show default | awk '{print $3}'):1234/
 
 ## 5. Probar en Discord
 
-1. `/help` muestra los cuatro comandos.
+1. `/help` muestra los comandos.
 2. `/panel` publica el mensaje; los botones abren los Notion y los recursos.
 3. `/ia mensaje:¿qué es nmap?` responde con el modelo.
 4. Con el servidor de LM Studio parado, `/ia` avisa de que el modelo no está
