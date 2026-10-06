@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 import pytest
 from aiohttp import web
@@ -10,7 +11,16 @@ from bot.lmstudio import (
     LMStudioTimeout,
     LMStudioTruncated,
     LMStudioUnavailable,
+    StreamEvent,
+    strip_reasoning,
 )
+
+
+def msgs(system, user):
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]
 
 
 def ok_body(content):
@@ -42,7 +52,7 @@ async def test_returns_stripped_content_and_sends_messages(serve):
         return web.json_response(ok_body("  hola  \n"))
 
     client = LMStudioClient(await serve(handler))
-    assert await client.chat("sistema", "pregunta") == "hola"
+    assert await client.chat(msgs("sistema", "pregunta")) == "hola"
     assert received["messages"] == [
         {"role": "system", "content": "sistema"},
         {"role": "user", "content": "pregunta"},
@@ -58,7 +68,7 @@ async def test_sends_model_when_configured(serve):
         return web.json_response(ok_body("ok"))
 
     client = LMStudioClient(await serve(handler), model="qwen")
-    await client.chat("s", "u")
+    await client.chat(msgs("s", "u"))
     assert received["model"] == "qwen"
 
 
@@ -67,7 +77,7 @@ async def test_strips_think_blocks(serve):
         return web.json_response(ok_body("<think>razono\nmucho</think>\n\nrespuesta"))
 
     client = LMStudioClient(await serve(handler))
-    assert await client.chat("s", "u") == "respuesta"
+    assert await client.chat(msgs("s", "u")) == "respuesta"
 
 
 async def test_http_error_is_bad_response(serve):
@@ -76,7 +86,7 @@ async def test_http_error_is_bad_response(serve):
 
     client = LMStudioClient(await serve(handler))
     with pytest.raises(LMStudioBadResponse):
-        await client.chat("s", "u")
+        await client.chat(msgs("s", "u"))
 
 
 @pytest.mark.parametrize(
@@ -97,7 +107,7 @@ async def test_unusable_body_is_bad_response(serve, body):
 
     client = LMStudioClient(await serve(handler))
     with pytest.raises(LMStudioBadResponse):
-        await client.chat("s", "u")
+        await client.chat(msgs("s", "u"))
 
 
 async def test_non_json_body_is_bad_response(serve):
@@ -106,7 +116,7 @@ async def test_non_json_body_is_bad_response(serve):
 
     client = LMStudioClient(await serve(handler))
     with pytest.raises(LMStudioBadResponse):
-        await client.chat("s", "u")
+        await client.chat(msgs("s", "u"))
 
 
 async def test_slow_server_is_timeout(serve):
@@ -116,13 +126,13 @@ async def test_slow_server_is_timeout(serve):
 
     client = LMStudioClient(await serve(handler), timeout=0.2)
     with pytest.raises(LMStudioTimeout):
-        await client.chat("s", "u")
+        await client.chat(msgs("s", "u"))
 
 
 async def test_closed_port_is_unavailable():
     client = LMStudioClient(f"http://127.0.0.1:{unused_port()}/v1", timeout=2)
     with pytest.raises(LMStudioUnavailable):
-        await client.chat("s", "u")
+        await client.chat(msgs("s", "u"))
 
 
 @pytest.mark.parametrize(
@@ -138,7 +148,7 @@ async def test_strips_malformed_think_blocks(serve, content):
         return web.json_response(ok_body(content))
 
     client = LMStudioClient(await serve(handler))
-    assert await client.chat("s", "u") == "respuesta"
+    assert await client.chat(msgs("s", "u")) == "respuesta"
 
 
 async def test_unclosed_think_without_answer_is_bad_response(serve):
@@ -147,7 +157,7 @@ async def test_unclosed_think_without_answer_is_bad_response(serve):
 
     client = LMStudioClient(await serve(handler))
     with pytest.raises(LMStudioBadResponse):
-        await client.chat("s", "u")
+        await client.chat(msgs("s", "u"))
 
 
 async def test_generation_settings_and_separate_reasoning(serve):
@@ -160,7 +170,7 @@ async def test_generation_settings_and_separate_reasoning(serve):
         return web.json_response(body)
 
     client = LMStudioClient(await serve(handler), max_tokens=16384)
-    assert await client.chat("s", "u") == "respuesta final"
+    assert await client.chat(msgs("s", "u")) == "respuesta final"
     assert received["temperature"] == 0.6
     assert received["top_p"] == 0.95
     assert received["top_k"] == 20
@@ -177,4 +187,81 @@ async def test_token_limit_never_publishes_incomplete_answers(serve, content):
 
     client = LMStudioClient(await serve(handler))
     with pytest.raises(LMStudioTruncated):
-        await client.chat("s", "u")
+        await client.chat(msgs("s", "u"))
+
+
+def sse(events):
+    async def handler(request):
+        resp = web.StreamResponse()
+        resp.headers["Content-Type"] = "text/event-stream"
+        await resp.prepare(request)
+        for line in events:
+            await resp.write(line.encode("utf-8"))
+        await resp.write_eof()
+        return resp
+    return handler
+
+
+def delta(content=None, reasoning=None, finish=None):
+    choice = {"delta": {}}
+    if content is not None:
+        choice["delta"]["content"] = content
+    if reasoning is not None:
+        choice["delta"]["reasoning_content"] = reasoning
+    if finish is not None:
+        choice["finish_reason"] = finish
+    return "data: " + json.dumps({"choices": [choice]}) + "\n\n"
+
+
+async def collect(client, messages):
+    return [event async for event in client.stream_chat(messages)]
+
+
+async def test_stream_yields_text_deltas_and_stops_at_done(serve):
+    events = [delta("ho"), delta("la"), "data: [DONE]\n\n", delta("IGNORA")]
+    client = LMStudioClient(await serve(sse(events)))
+    out = await collect(client, msgs("s", "u"))
+    assert "".join(e.text for e in out) == "hola"
+
+
+async def test_stream_ignores_blank_and_non_data_lines(serve):
+    events = ["\n", ": comentario\n", delta("ok"), "\n"]
+    client = LMStudioClient(await serve(sse(events)))
+    out = await collect(client, msgs("s", "u"))
+    assert "".join(e.text for e in out) == "ok"
+
+
+async def test_stream_separates_reasoning_from_text(serve):
+    events = [delta(reasoning="pienso"), delta("respuesta")]
+    client = LMStudioClient(await serve(sse(events)))
+    out = await collect(client, msgs("s", "u"))
+    assert "".join(e.text for e in out) == "respuesta"
+    assert any(e.reasoning == "pienso" for e in out)
+
+
+async def test_stream_exposes_finish_reason(serve):
+    events = [delta("parcial", finish="length")]
+    client = LMStudioClient(await serve(sse(events)))
+    out = await collect(client, msgs("s", "u"))
+    assert out[-1].finish_reason == "length"
+
+
+async def test_stream_enables_streaming_in_payload(serve):
+    received = {}
+
+    async def handler(request):
+        received.update(await request.json())
+        resp = web.StreamResponse()
+        await resp.prepare(request)
+        await resp.write(delta("x").encode("utf-8"))
+        await resp.write_eof()
+        return resp
+
+    client = LMStudioClient(await serve(handler))
+    await collect(client, msgs("s", "u"))
+    assert received["stream"] is True
+
+
+def test_strip_reasoning_is_public():
+    assert strip_reasoning("<think>a</think>b") == "b"
+    assert StreamEvent().text == ""
