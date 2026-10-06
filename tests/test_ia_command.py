@@ -51,11 +51,13 @@ class FakeInteraction:
         self.user = SimpleNamespace(id=user_id)
         self.channel_id = channel_id
         self.log = []
+        self.edits = []
         self.response = SimpleNamespace(send_message=self._send_message, defer=self._defer)
         self.followup = SimpleNamespace(send=self._followup)
 
     async def edit_original_response(self, content=None, **kwargs):
         self.log.append(("edit", content))
+        self.edits.append((content, kwargs.get("allowed_mentions")))
 
     async def _send_message(self, content=None, **kwargs):
         self.log.append(("send_message", content, kwargs.get("ephemeral", False)))
@@ -70,10 +72,10 @@ class FakeInteraction:
         self.log.append(("delete",))
 
 
-def make_command(model, store=None, history_tokens=3000):
+def make_command(model, store=None, history_tokens=3000, clock=lambda: 0.0):
     tree = app_commands.CommandTree(discord.Client(intents=discord.Intents.none()))
     store = store or FakeStore()
-    ia.register(tree, model, store, history_tokens, clock=lambda: 0.0)
+    ia.register(tree, model, store, history_tokens, clock=clock)
     return tree.get_command("ia").callback, store
 
 
@@ -240,9 +242,88 @@ async def test_generated_mentions_are_disabled():
     interaction = FakeInteraction()
     command, _ = make_command(FakeModel(deltas=["@everyone <@123>"]))
     await command(interaction, "hola")
-    # La ruta de edición no propaga menciones: Discord no notifica al editar.
     assert interaction.log[-1] == ("edit", "> hola\n\n@everyone <@123>")
     assert not any(entry[0] == "followup" for entry in interaction.log)
+    assert len(interaction.edits) >= 2  # preview + final
+    none = discord.AllowedMentions.none().to_dict()
+    for _, mentions in interaction.edits:
+        assert mentions.to_dict() == none
+
+
+class Ticker:
+    def __init__(self):
+        self.now = 0.0
+
+    def __call__(self):
+        return self.now
+
+
+class SteppedModel(FakeModel):
+    def __init__(self, deltas, ticker, steps):
+        super().__init__(deltas=deltas)
+        self.ticker, self.steps = ticker, steps
+
+    async def stream_chat(self, messages):
+        from bot.lmstudio import StreamEvent
+        for text, step in zip(self.deltas, self.steps):
+            self.ticker.now += step
+            yield StreamEvent(text=text)
+
+
+async def test_preview_shows_thinking_while_only_reasoning_is_streamed():
+    command, _ = make_command(FakeModel(deltas=["<think>dando vueltas", "</think>hola"]))
+    interaction = FakeInteraction()
+    await command(interaction, "q")
+    assert interaction.edits[0][0] == "🤔 pensando…"
+
+
+async def test_preview_edits_are_throttled_by_the_clock():
+    ticker = Ticker()
+    model = SteppedModel(["a", "b", "c"], ticker, [0.0, 0.5, 1.0])
+    command, _ = make_command(model, clock=ticker)
+    interaction = FakeInteraction()
+    await command(interaction, "q")
+    # t=0 preview; t=0.5 skipped; t=1.5 preview; luego la edición final
+    assert [c for c, _ in interaction.edits] == [
+        "> q\n\na", "> q\n\nabc", "> q\n\nabc",
+    ]
+
+
+async def test_preview_failure_does_not_abort_the_answer():
+    interaction = FakeInteraction()
+    original = interaction.edit_original_response
+    calls = []
+
+    async def flaky(content=None, **kwargs):
+        calls.append(content)
+        if len(calls) == 1:
+            raise discord.HTTPException(SimpleNamespace(status=500, reason="x"), "boom")
+        await original(content, **kwargs)
+
+    interaction.edit_original_response = flaky
+    command, store = make_command(FakeModel(deltas=["ok"]))
+    await command(interaction, "q")
+    assert interaction.log[-1] == ("edit", "> q\n\nok")
+    assert (100, "assistant", "ok") in store.appended
+
+
+async def test_empty_visible_answer_is_reported_and_not_stored():
+    command, store = make_command(FakeModel(deltas=["<think>solo pienso</think>"]))
+    interaction = FakeInteraction()
+    await command(interaction, "q")
+    assert store.appended == []
+    assert interaction.log[-2] == ("delete",)
+    assert interaction.log[-1][0] == "followup" and interaction.log[-1][2] is True
+
+
+async def test_timeout_is_reported_and_not_stored(monkeypatch):
+    monkeypatch.setattr(ia, "REQUEST_DEADLINE_SECONDS", 0.05)
+    command, store = make_command(FakeModel(gate=asyncio.Event()))
+    interaction = FakeInteraction()
+    await command(interaction, "q")
+    assert store.appended == []
+    assert interaction.log[-2] == ("delete",)
+    assert interaction.log[-1][2] is True and "tardado" in interaction.log[-1][1]
 
 
 async def test_long_answer_is_sent_in_order_with_exact_attachment():
