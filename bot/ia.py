@@ -10,7 +10,15 @@ from typing import Callable
 import discord
 from discord import app_commands
 
-from bot.lmstudio import LMStudioClient, LMStudioError, LMStudioTimeout
+from bot.lmstudio import (
+    LMStudioBadResponse,
+    LMStudioClient,
+    LMStudioError,
+    LMStudioTimeout,
+    LMStudioTruncated,
+    strip_reasoning,
+)
+from bot.memory import ConversationStore
 
 log = logging.getLogger(__name__)
 
@@ -91,6 +99,8 @@ MESSAGE_LIMIT = 2000
 QUOTE_LIMIT = 200
 FENCE = "```"
 MAX_INLINE_CHUNKS = 6
+PREVIEW_INTERVAL = 1.0
+PREVIEW_LIMIT = 1900
 _OPEN_FENCE = re.compile(r"^(`{3,}|~{3,})([^\n]*)\n", re.MULTILINE)
 
 
@@ -214,9 +224,11 @@ class Admission:
 
 def register(
     tree: app_commands.CommandTree, client: LMStudioClient,
+    store: ConversationStore, history_tokens: int,
     operation_lock: asyncio.Lock | None = None,
+    clock: Callable[[], float] = time.monotonic,
 ) -> None:
-    cooldown = Cooldown(COOLDOWN_SECONDS)
+    cooldown = Cooldown(COOLDOWN_SECONDS, clock)
     admission = Admission(MAX_PENDING)
     lock = operation_lock if operation_lock is not None else asyncio.Lock()
     no_mentions = discord.AllowedMentions.none()
@@ -242,6 +254,14 @@ def register(
         finally:
             admission.leave(user_id)
 
+    @tree.command(name="ia-reset", description="Borra la memoria de /ia en este canal")
+    @app_commands.guild_only()
+    async def ia_reset(interaction: discord.Interaction):
+        await asyncio.to_thread(store.reset, interaction.channel_id)
+        await interaction.response.send_message(
+            "Memoria del canal borrada. Empezamos de cero.", ephemeral=True
+        )
+
     async def answer_question(interaction: discord.Interaction, mensaje: str) -> None:
         user_id = interaction.user.id
         remaining = cooldown.remaining(user_id)
@@ -255,13 +275,16 @@ def register(
         cooldown.touch(user_id)
         await interaction.response.defer(thinking=True)
         try:
-            async def generate() -> str:
-                async with lock:
-                    return await client.chat(
-                        SYSTEM_PROMPT, mensaje + "\n\nResponde en español."
-                    )
-
-            answer = await asyncio.wait_for(generate(), timeout=REQUEST_DEADLINE_SECONDS)
+            history = await read_history(interaction.channel_id)
+            messages = (
+                [{"role": "system", "content": SYSTEM_PROMPT}]
+                + history
+                + [{"role": "user", "content": mensaje + "\n\nResponde en español."}]
+            )
+            answer = await asyncio.wait_for(
+                stream_answer(interaction, mensaje, messages),
+                timeout=REQUEST_DEADLINE_SECONDS,
+            )
         except asyncio.TimeoutError:
             cooldown.reset(user_id)
             await interaction.delete_original_response()
@@ -270,14 +293,63 @@ def register(
         except LMStudioError as exc:
             cooldown.reset(user_id)
             log.warning("Fallo de LM Studio: %s: %s", type(exc).__name__, exc)
-            # Se borra el "pensando…" público para que el aviso solo lo vea quien preguntó
+            # Se borra el preview público para que el aviso solo lo vea quien preguntó
             await interaction.delete_original_response()
             await interaction.followup.send(exc.user_message, ephemeral=True)
             return
+        await publish(interaction, mensaje, answer)
+        await store_turn(interaction.channel_id, mensaje, answer)
+
+    async def read_history(channel_id: int) -> list[dict]:
+        try:
+            return await asyncio.to_thread(store.window, channel_id, history_tokens)
+        except Exception as exc:  # degradar: la respuesta no debe caerse por la BD
+            log.warning("No se pudo leer el historial del canal %s: %s", channel_id, exc)
+            return []
+
+    async def store_turn(channel_id: int, mensaje: str, answer: str) -> None:
+        try:
+            await asyncio.to_thread(store.append, channel_id, "user", mensaje)
+            await asyncio.to_thread(store.append, channel_id, "assistant", answer)
+        except Exception as exc:
+            log.warning("No se pudo guardar el turno del canal %s: %s", channel_id, exc)
+
+    async def stream_answer(
+        interaction: discord.Interaction, mensaje: str, messages: list[dict]
+    ) -> str:
+        raw = ""
+        finish_reason = None
+        last_edit = None
+        async with lock:
+            async for event in client.stream_chat(messages):
+                raw += event.text
+                finish_reason = event.finish_reason or finish_reason
+                now = clock()
+                if last_edit is None or now - last_edit >= PREVIEW_INTERVAL:
+                    await edit_preview(interaction, mensaje, raw)
+                    last_edit = now
+        if finish_reason == "length":
+            raise LMStudioTruncated("límite de generación alcanzado")
+        answer = strip_reasoning(raw)
+        if not answer:
+            raise LMStudioBadResponse("contenido vacío")
+        return answer
+
+    async def edit_preview(
+        interaction: discord.Interaction, mensaje: str, raw: str
+    ) -> None:
+        visible = strip_reasoning(raw)
+        content = "🤔 pensando…" if not visible else format_reply(mensaje, visible)
+        await interaction.edit_original_response(content=content[:PREVIEW_LIMIT])
+
+    async def publish(interaction: discord.Interaction, mensaje: str, answer: str) -> None:
         chunks = chunk_text(format_reply(mensaje, answer))
         if len(chunks) == 1:
-            await interaction.followup.send(chunks[0], allowed_mentions=no_mentions)
+            await interaction.edit_original_response(
+                content=chunks[0], allowed_mentions=no_mentions
+            )
             return
+        await interaction.delete_original_response()
         # El archivo conserva exactamente el código, incluso líneas que no caben
         # en un mensaje. Se envía primero para no depender de los envíos siguientes.
         document = f"# Pregunta\n\n{mensaje}\n\n# Respuesta\n\n{answer}"
