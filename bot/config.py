@@ -5,6 +5,8 @@ from typing import Mapping
 DEFAULT_BASE_URL = "http://localhost:1234/v1"
 DEFAULT_TIMEOUT = 120.0
 DEFAULT_MAX_TOKENS = 8192
+DEFAULT_HISTORY_TOKENS = 3000
+DEFAULT_DB_PATH = "ia_history.db"
 BUTTON_URL_LIMIT = 512
 
 
@@ -24,6 +26,8 @@ class Config:
     lmstudio_timeout: float = DEFAULT_TIMEOUT
     lmstudio_max_tokens: int = DEFAULT_MAX_TOKENS
     lmstudio_auto_init: bool = False
+    ia_history_tokens: int = DEFAULT_HISTORY_TOKENS
+    ia_db_path: str = DEFAULT_DB_PATH
 
 
 def _required(env: Mapping[str, str], name: str) -> str:
@@ -82,6 +86,19 @@ def _max_tokens(env: Mapping[str, str]) -> int:
     return value
 
 
+def _history_tokens(env: Mapping[str, str]) -> int:
+    raw = env.get("IA_HISTORY_TOKENS", "").strip()
+    if not raw:
+        return DEFAULT_HISTORY_TOKENS
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value <= 0:
+        raise ConfigError("IA_HISTORY_TOKENS debe ser un entero mayor que 0")
+    return value
+
+
 def load_config(env: Mapping[str, str]) -> Config:
     base_url = env.get("LMSTUDIO_BASE_URL", "").strip() or DEFAULT_BASE_URL
     auto_init = env.get("LMSTUDIO_AUTO_INIT", "false").strip().lower() or "false"
@@ -98,4 +115,6 @@ def load_config(env: Mapping[str, str]) -> Config:
         lmstudio_timeout=_timeout(env),
         lmstudio_max_tokens=_max_tokens(env),
         lmstudio_auto_init=auto_init == "true",
+        ia_history_tokens=_history_tokens(env),
+        ia_db_path=env.get("IA_DB_PATH", "").strip() or DEFAULT_DB_PATH,
     )

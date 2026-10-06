@@ -92,3 +92,20 @@ def test_auto_init_is_optional_and_strict():
     assert load_config({**BASE, "LMSTUDIO_AUTO_INIT": "true"}).lmstudio_auto_init
     with pytest.raises(ConfigError, match="LMSTUDIO_AUTO_INIT"):
         load_config({**BASE, "LMSTUDIO_AUTO_INIT": "yes"})
+
+
+def test_history_defaults_when_absent():
+    config = load_config(BASE)
+    assert config.ia_history_tokens == 3000
+    assert config.ia_db_path == "ia_history.db"
+
+
+def test_history_tokens_must_be_positive_int():
+    with pytest.raises(ConfigError):
+        load_config({**BASE, "IA_HISTORY_TOKENS": "0"})
+
+
+def test_history_values_are_read_from_env():
+    config = load_config({**BASE, "IA_HISTORY_TOKENS": "1500", "IA_DB_PATH": "/data/ia.db"})
+    assert config.ia_history_tokens == 1500
+    assert config.ia_db_path == "/data/ia.db"
