@@ -6,14 +6,14 @@ This Python Discord bot serves the Talent4Cyber group with `/panel`, `/ia`, and 
 
 ## Build, Test, and Development Commands
 
-Run commands from the repository root. For Linux/WSL:
+Run commands from the repository root. For Linux (Kali, etc.) or WSL (Python 3.12; create the venv fresh on each machine):
 
 ```bash
-python3 -m venv .venv-wsl
-.venv-wsl/bin/python -m pip install -r requirements.txt
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
 cp .env.example .env
-.venv-wsl/bin/python -m bot.main
-.venv-wsl/bin/python -m pytest -q
+.venv/bin/python -m bot.main
+.venv/bin/python -m pytest -q
 ```
 
 These commands create an environment, install runtime and test dependencies, initialize local configuration, launch the bot, and run the test suite. Fill in `.env` before launching. On Windows, follow the PowerShell setup in `README.md`. Load a model and start LM Studio's server before using `/ia`.

@@ -152,8 +152,22 @@ y documentación antes de usarlos durante la competición.
 
 ## 4. Ejecutar el bot
 
-En Windows (PowerShell), que es lo más simple porque LM Studio queda en
-`localhost`:
+Necesitas Python 3.12. Crea el entorno desde cero en cada máquina (un `.venv`
+copiado de otro sistema operativo no funciona).
+
+En **Kali / Linux nativo**, con LM Studio corriendo en la misma máquina, es el
+caso más simple porque el servidor queda en `localhost` (el valor por defecto de
+`LMSTUDIO_BASE_URL`, no hace falta tocarlo):
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+cp .env.example .env   # rellena DISCORD_TOKEN, GUILD_ID y los tres NOTION_*_URL
+.venv/bin/python -m bot.main
+```
+
+En **Windows (PowerShell)**, con LM Studio en la misma máquina (también
+`localhost`):
 
 ```powershell
 py -m venv .venv
@@ -162,14 +176,16 @@ pip install -r requirements.txt
 python -m bot.main
 ```
 
-En WSL, LM Studio no está en `localhost`. Activa **Serve on Local Network** en
-LM Studio y pon en el `.env` la IP de Windows:
+Si LM Studio corre en **otra máquina** (por ejemplo, Kali por un lado y LM Studio
+en un Windows por otro, o el caso de WSL donde el host Windows no es `localhost`):
+activa **Serve on Local Network** en LM Studio y apunta `LMSTUDIO_BASE_URL` a la
+IP de esa máquina. Desde WSL, la IP del host Windows es:
 
 ```bash
-python3 -m venv .venv-wsl
-.venv-wsl/bin/python -m pip install -r requirements.txt
-echo "LMSTUDIO_BASE_URL=http://$(ip route show default | awk '{print $3}'):1234/v1"
-.venv-wsl/bin/python -m bot.main
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+echo "LMSTUDIO_BASE_URL=http://$(ip route show default | awk '{print $3}'):1234/v1"  # IP del host Windows (solo WSL)
+.venv/bin/python -m bot.main
 ```
 
 ## 5. Probar en Discord
@@ -188,5 +204,5 @@ Edita la lista `RESOURCES` de `bot/panel.py` (máximo 20) y vuelve a lanzar `/pa
 ## Tests
 
 ```bash
-.venv-wsl/bin/python -m pytest -q
+.venv/bin/python -m pytest -q
 ```
