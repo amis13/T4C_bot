@@ -6,6 +6,7 @@ from bot.panel import COLOR
 COMMANDS = [
     ("/panel", "Publica el mensaje principal con los Notion y los recursos de competición. Solo administración."),
     ("/ia", "Pregunta al modelo local del grupo. Cada pregunta es independiente."),
+    ("/initai", "Carga Qwythos con contexto 16384, una consulta simultánea y MTP. Solo administración."),
     ("/help", "Muestra esta ayuda."),
 ]
 

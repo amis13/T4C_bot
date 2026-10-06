@@ -1,3 +1,5 @@
+import pytest
+
 from bot.ia import chunk_text, format_reply
 
 
@@ -74,3 +76,54 @@ def test_indentation_survives_a_chunk_boundary():
     assert all(len(chunk) <= 48 for chunk in chunks)
     body = "\n".join(chunk[4:-4] for chunk in chunks)
     assert body == "\n".join(lines)
+
+
+@pytest.mark.parametrize("language", ["python", "powershell", "bash", "sql"])
+def test_code_language_and_whitespace_survive_chunk_boundaries(language):
+    lines = [f"    linea {i:02d}  " for i in range(12)]
+    text = f"```{language}\n" + "\n".join(lines) + "\n```"
+    chunks = chunk_text(text, limit=64)
+    header = f"```{language}\n"
+    assert all(chunk.startswith(header) and chunk.endswith("\n```") for chunk in chunks)
+    assert all(len(chunk) <= 64 for chunk in chunks)
+    assert "\n".join(chunk[len(header):-4] for chunk in chunks) == "\n".join(lines)
+
+
+def test_long_code_line_is_not_split_at_spaces_or_lost():
+    body = 'token = "' + "a b " * 1000 + '"'
+    chunks = chunk_text("```python\n" + body + "\n```")
+    assert "".join(chunk[len("```python\n"):-4] for chunk in chunks) == body
+    assert all(len(chunk) <= 2000 for chunk in chunks)
+
+
+def test_emojis_fit_even_when_counted_as_utf16():
+    text = "🔐" * 2000
+    chunks = chunk_text(text)
+    assert len(chunks) == 2
+    assert "".join(chunks) == text
+    assert all(len(chunk.encode("utf-16-le")) // 2 <= 2000 for chunk in chunks)
+
+
+def test_backticks_inside_a_code_line_do_not_close_the_block():
+    body = '\n'.join(['    print("```")'] * 300)
+    chunks = chunk_text("```python\n" + body + "\n```")
+    assert all(chunk.startswith("```python\n") and chunk.endswith("\n```") for chunk in chunks)
+    assert "\n".join(chunk[len("```python\n"):-4] for chunk in chunks) == body
+
+
+def test_multiple_blocks_keep_their_own_language_and_plain_text():
+    chunks = chunk_text(
+        "Introducción\n```bash\n" + "echo hola\n" * 300
+        + "```\nExplicación\n```sql\n" + "SELECT 1;\n" * 300 + "```\nFinal"
+    )
+    assert chunks[0] == "Introducción"
+    assert "Explicación" in chunks
+    assert chunks[-1] == "Final"
+    assert any(chunk.startswith("```bash\n") for chunk in chunks)
+    assert any(chunk.startswith("```sql\n") for chunk in chunks)
+    assert all(len(chunk) <= 2000 for chunk in chunks)
+
+
+def test_unclosed_long_code_block_is_closed_for_display():
+    chunks = chunk_text("```bash\n" + "echo hola\n" * 300)
+    assert all(chunk.startswith("```bash\n") and chunk.endswith("\n```") for chunk in chunks)

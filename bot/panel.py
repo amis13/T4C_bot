@@ -16,6 +16,7 @@ RESOURCES = [
     ("RevShells", "🐚", "https://www.revshells.com/"),
     ("CyberChef", "🍳", "https://gchq.github.io/CyberChef/"),
     ("CrackStation", "🔓", "https://crackstation.net/"),
+    ("Hashes.com", "🔐", "https://hashes.com/en/decrypt/hash"),
     ("WADComs", "🏰", "https://wadcoms.github.io/"),
 ]
 

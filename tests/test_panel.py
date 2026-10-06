@@ -51,5 +51,5 @@ async def test_every_button_is_a_valid_link_and_rows_fit_discord_limits():
 def test_help_lists_every_command():
     embed = build_help()
     names = [field.name for field in embed.fields]
-    assert names == ["/panel", "/ia", "/help"]
+    assert names == ["/panel", "/ia", "/initai", "/help"]
     assert all(field.value for field in embed.fields)

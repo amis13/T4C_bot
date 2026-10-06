@@ -3,6 +3,8 @@ import re
 
 import aiohttp
 
+from bot.config import DEFAULT_MAX_TOKENS
+
 _FLAGS = re.DOTALL | re.IGNORECASE
 _THINK_PAIR = re.compile(r"<think>.*?</think>", _FLAGS)
 # Cierre sin apertura: la plantilla del modelo puso <think> en el prompt
@@ -33,14 +35,33 @@ class LMStudioBadResponse(LMStudioError):
     user_message = "El modelo ha devuelto una respuesta no válida."
 
 
+class LMStudioTruncated(LMStudioError):
+    user_message = (
+        "El modelo agotó el límite de tokens antes de completar la respuesta. "
+        "Acota la pregunta o aumenta LMSTUDIO_MAX_TOKENS y el contexto en LM Studio."
+    )
+
+
 class LMStudioClient:
-    def __init__(self, base_url: str, model: str = "", timeout: float = 120.0):
+    def __init__(
+        self, base_url: str, model: str = "", timeout: float = 120.0,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
+    ):
         self._url = base_url.rstrip("/") + "/chat/completions"
         self._model = model
         self._timeout = aiohttp.ClientTimeout(total=timeout)
+        self._max_tokens = max_tokens
+
+    def set_model(self, identifier: str) -> None:
+        self._model = identifier
 
     async def chat(self, system: str, user: str) -> str:
         payload = {
+            "temperature": 0.6,
+            "top_p": 0.95,
+            "top_k": 20,
+            "max_tokens": self._max_tokens,
+            "stream": False,
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
@@ -50,12 +71,18 @@ class LMStudioClient:
             payload["model"] = self._model
         data = await self._post(payload)
         try:
-            content = data["choices"][0]["message"]["content"]
+            choice = data["choices"][0]
+            content = choice["message"]["content"]
         except (KeyError, IndexError, TypeError) as exc:
             raise LMStudioBadResponse("respuesta sin choices") from exc
         if not isinstance(content, str):
+            if choice.get("finish_reason") == "length":
+                raise LMStudioTruncated("límite de generación sin respuesta textual")
             raise LMStudioBadResponse("contenido no textual")
         content = _strip_reasoning(content)
+        if choice.get("finish_reason") == "length":
+            # No publicar comandos incompletos como si fueran una respuesta terminada.
+            raise LMStudioTruncated("límite de generación alcanzado")
         if not content:
             raise LMStudioBadResponse("contenido vacío")
         return content

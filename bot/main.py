@@ -7,7 +7,7 @@ from discord import app_commands
 from dotenv import load_dotenv
 
 from bot import help as help_command
-from bot import ia, panel
+from bot import aiinit, ia, panel
 from bot.config import Config, ConfigError, load_config
 from bot.lmstudio import LMStudioClient
 
@@ -21,6 +21,7 @@ class Bot(discord.Client):
             allowed_mentions=discord.AllowedMentions.none(),
         )
         self.config = config
+        self.initializer = None
         self.tree = app_commands.CommandTree(self)
         self.tree.error(self.on_command_error)
 
@@ -37,6 +38,11 @@ class Bot(discord.Client):
             )
             raise
         log.info("Comandos registrados: %s", ", ".join(command.name for command in synced))
+        if self.config.lmstudio_auto_init and self.initializer is not None:
+            try:
+                log.info("Inicialización de LM Studio: %s", await self.initializer.initialize())
+            except aiinit.InitializationError as exc:
+                log.warning("No se pudo inicializar LM Studio al arrancar: %s", exc)
 
     async def on_ready(self) -> None:
         log.info("Conectado como %s", self.user)
@@ -58,10 +64,13 @@ class Bot(discord.Client):
 def build_bot(config: Config) -> Bot:
     bot = Bot(config)
     client = LMStudioClient(
-        config.lmstudio_base_url, config.lmstudio_model, config.lmstudio_timeout
+        config.lmstudio_base_url, config.lmstudio_model, config.lmstudio_timeout,
+        max_tokens=config.lmstudio_max_tokens,
     )
     panel.register(bot.tree, config)
-    ia.register(bot.tree, client)
+    bot.initializer = aiinit.ModelInitializer(client, config.lmstudio_base_url, config.lmstudio_model)
+    ia.register(bot.tree, client, bot.initializer.lock)
+    aiinit.register(bot.tree, bot.initializer)
     help_command.register(bot.tree)
     return bot
 

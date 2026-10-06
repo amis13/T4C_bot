@@ -8,6 +8,7 @@ from bot.lmstudio import (
     LMStudioBadResponse,
     LMStudioClient,
     LMStudioTimeout,
+    LMStudioTruncated,
     LMStudioUnavailable,
 )
 
@@ -146,4 +147,34 @@ async def test_unclosed_think_without_answer_is_bad_response(serve):
 
     client = LMStudioClient(await serve(handler))
     with pytest.raises(LMStudioBadResponse):
+        await client.chat("s", "u")
+
+
+async def test_generation_settings_and_separate_reasoning(serve):
+    received = {}
+
+    async def handler(request):
+        received.update(await request.json())
+        body = ok_body("respuesta final")
+        body["choices"][0]["message"]["reasoning_content"] = "razonamiento privado"
+        return web.json_response(body)
+
+    client = LMStudioClient(await serve(handler), max_tokens=16384)
+    assert await client.chat("s", "u") == "respuesta final"
+    assert received["temperature"] == 0.6
+    assert received["top_p"] == 0.95
+    assert received["top_k"] == 20
+    assert received["max_tokens"] == 16384
+    assert received["stream"] is False
+
+
+@pytest.mark.parametrize("content", [None, "<think>razonando", "```bash\nnmap -"])
+async def test_token_limit_never_publishes_incomplete_answers(serve, content):
+    async def handler(request):
+        body = ok_body(content)
+        body["choices"][0]["finish_reason"] = "length"
+        return web.json_response(body)
+
+    client = LMStudioClient(await serve(handler))
+    with pytest.raises(LMStudioTruncated):
         await client.chat("s", "u")

@@ -120,3 +120,84 @@ async def test_queue_is_bounded_across_users():
     after = FakeInteraction(user_id=999)
     await command(after, "pregunta")
     assert after.log[0] == ("defer",)
+
+
+async def test_blank_question_does_not_call_model_or_consume_cooldown():
+    model = FakeModel()
+    command = make_command(model)
+    blank = FakeInteraction()
+    await command(blank, " \n ")
+    assert blank.log[0][2] is True
+    assert model.calls == 0
+    await command(FakeInteraction(), "pregunta")
+    assert model.calls == 1
+
+
+async def test_deadline_includes_queue_and_releases_admission(monkeypatch):
+    monkeypatch.setattr(ia, "REQUEST_DEADLINE_SECONDS", 0.1)
+    gate = asyncio.Event()
+    model = FakeModel(gate=gate)
+    command = make_command(model)
+    first, queued = FakeInteraction(1), FakeInteraction(2)
+    await asyncio.gather(command(first, "una"), command(queued, "dos"))
+    for interaction in (first, queued):
+        assert interaction.log[-2] == ("delete",)
+        assert interaction.log[-1][2] is True
+        assert "tardado" in interaction.log[-1][1]
+    gate.set()
+    for user in (1, 2):
+        retry = FakeInteraction(user)
+        await command(retry, "otra")
+        assert retry.log[-1] == ("followup", "> otra\n\nrespuesta", False)
+
+
+async def test_generated_mentions_are_disabled():
+    interaction = FakeInteraction()
+    mentions = []
+    original = interaction._followup
+
+    async def capture(content=None, **kwargs):
+        mentions.append(kwargs["allowed_mentions"])
+        await original(content, **kwargs)
+
+    interaction.followup.send = capture
+    await make_command(FakeModel(answer="@everyone <@123>"))(interaction, "hola")
+    assert mentions[0].to_dict() == discord.AllowedMentions.none().to_dict()
+
+
+async def test_long_answer_is_sent_in_order_with_exact_attachment():
+    answer = "```python\n" + '    print("🔐")  \n' * 250 + "```"
+    interaction = FakeInteraction()
+    sent = []
+    documents = []
+
+    async def capture(content=None, **kwargs):
+        sent.append(content)
+        assert kwargs["allowed_mentions"].to_dict() == discord.AllowedMentions.none().to_dict()
+        if "file" in kwargs:
+            file = kwargs["file"]
+            assert file.filename == "respuesta-ia.md"
+            documents.append(file.fp.read().decode("utf-8"))
+
+    interaction.followup.send = capture
+    await make_command(FakeModel(answer=answer))(interaction, "pregunta")
+    assert sent == ia.chunk_text(ia.format_reply("pregunta", answer))
+    assert len(sent) > 1
+    assert all(len(message.encode("utf-16-le")) // 2 <= 2000 for message in sent)
+    assert documents == [f"# Pregunta\n\npregunta\n\n# Respuesta\n\n{answer}"]
+
+
+async def test_very_long_answer_is_complete_in_one_attachment():
+    answer = "x" * 20000
+    interaction = FakeInteraction()
+    sent = []
+
+    async def capture(content=None, **kwargs):
+        sent.append(content)
+        assert kwargs["file"].fp.read().decode("utf-8").endswith(answer)
+        assert kwargs["allowed_mentions"].to_dict() == discord.AllowedMentions.none().to_dict()
+
+    interaction.followup.send = capture
+    await make_command(FakeModel(answer=answer))(interaction, "pregunta")
+    assert len(sent) == 1
+    assert "archivo adjunto" in sent[0]

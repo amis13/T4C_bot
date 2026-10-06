@@ -1,8 +1,10 @@
+import math
 from dataclasses import dataclass
 from typing import Mapping
 
 DEFAULT_BASE_URL = "http://localhost:1234/v1"
 DEFAULT_TIMEOUT = 120.0
+DEFAULT_MAX_TOKENS = 8192
 BUTTON_URL_LIMIT = 512
 
 
@@ -20,6 +22,8 @@ class Config:
     lmstudio_base_url: str = DEFAULT_BASE_URL
     lmstudio_model: str = ""
     lmstudio_timeout: float = DEFAULT_TIMEOUT
+    lmstudio_max_tokens: int = DEFAULT_MAX_TOKENS
+    lmstudio_auto_init: bool = False
 
 
 def _required(env: Mapping[str, str], name: str) -> str:
@@ -60,13 +64,29 @@ def _timeout(env: Mapping[str, str]) -> float:
         value = float(raw)
     except ValueError:
         value = 0.0
-    if value <= 0:
+    if not math.isfinite(value) or value <= 0:
         raise ConfigError("LMSTUDIO_TIMEOUT debe ser un número de segundos mayor que 0")
+    return value
+
+
+def _max_tokens(env: Mapping[str, str]) -> int:
+    raw = env.get("LMSTUDIO_MAX_TOKENS", "").strip()
+    if not raw:
+        return DEFAULT_MAX_TOKENS
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value <= 0:
+        raise ConfigError("LMSTUDIO_MAX_TOKENS debe ser un entero mayor que 0")
     return value
 
 
 def load_config(env: Mapping[str, str]) -> Config:
     base_url = env.get("LMSTUDIO_BASE_URL", "").strip() or DEFAULT_BASE_URL
+    auto_init = env.get("LMSTUDIO_AUTO_INIT", "false").strip().lower() or "false"
+    if auto_init not in ("true", "false"):
+        raise ConfigError("LMSTUDIO_AUTO_INIT debe ser true o false")
     return Config(
         discord_token=_required(env, "DISCORD_TOKEN"),
         guild_id=_guild_id(env),
@@ -76,4 +96,6 @@ def load_config(env: Mapping[str, str]) -> Config:
         lmstudio_base_url=_check_http("LMSTUDIO_BASE_URL", base_url).rstrip("/"),
         lmstudio_model=env.get("LMSTUDIO_MODEL", "").strip(),
         lmstudio_timeout=_timeout(env),
+        lmstudio_max_tokens=_max_tokens(env),
+        lmstudio_auto_init=auto_init == "true",
     )

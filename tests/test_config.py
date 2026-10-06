@@ -65,7 +65,7 @@ def test_optional_values_are_read():
     assert config.lmstudio_timeout == 30.0
 
 
-@pytest.mark.parametrize("value", ["abc", "0", "-5"])
+@pytest.mark.parametrize("value", ["abc", "0", "-5", "nan", "inf", "-inf"])
 def test_invalid_timeout_is_rejected(value):
     with pytest.raises(ConfigError, match="LMSTUDIO_TIMEOUT"):
         load_config({**BASE, "LMSTUDIO_TIMEOUT": value})
@@ -74,3 +74,21 @@ def test_invalid_timeout_is_rejected(value):
 def test_base_url_must_be_http():
     with pytest.raises(ConfigError, match="LMSTUDIO_BASE_URL"):
         load_config({**BASE, "LMSTUDIO_BASE_URL": "localhost:1234"})
+
+
+def test_generation_budget_is_configurable():
+    assert load_config(BASE).lmstudio_max_tokens == 8192
+    assert load_config({**BASE, "LMSTUDIO_MAX_TOKENS": "16384"}).lmstudio_max_tokens == 16384
+
+
+@pytest.mark.parametrize("value", ["abc", "0", "-1", "1.5"])
+def test_invalid_generation_budget_is_rejected(value):
+    with pytest.raises(ConfigError, match="LMSTUDIO_MAX_TOKENS"):
+        load_config({**BASE, "LMSTUDIO_MAX_TOKENS": value})
+
+
+def test_auto_init_is_optional_and_strict():
+    assert not load_config(BASE).lmstudio_auto_init
+    assert load_config({**BASE, "LMSTUDIO_AUTO_INIT": "true"}).lmstudio_auto_init
+    with pytest.raises(ConfigError, match="LMSTUDIO_AUTO_INIT"):
+        load_config({**BASE, "LMSTUDIO_AUTO_INIT": "yes"})

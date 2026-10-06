@@ -1,5 +1,10 @@
 import discord
+import pytest
+from dataclasses import replace
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
+from bot.aiinit import InitializationError
 from bot.config import Config
 from bot.main import build_bot
 
@@ -12,9 +17,9 @@ CONFIG = Config(
 )
 
 
-def test_bot_registers_the_three_commands():
+def test_bot_registers_all_commands():
     bot = build_bot(CONFIG)
-    assert {command.name for command in bot.tree.get_commands()} == {"panel", "ia", "help"}
+    assert {command.name for command in bot.tree.get_commands()} == {"panel", "ia", "initai", "help"}
 
 
 def test_bot_never_mentions_and_uses_no_privileged_intents():
@@ -31,5 +36,17 @@ def test_ia_message_option_is_bounded():
     option = bot.tree.get_command("ia").parameters[0]
     assert option.name == "mensaje"
     assert option.required
-    assert (option.min_value, option.max_value) == (1, 1000)
+    assert (option.min_value, option.max_value) == (1, 4000)
     assert option.type is discord.AppCommandOptionType.string
+
+
+@pytest.mark.parametrize("fails", [False, True])
+async def test_startup_runs_auto_init_and_survives_model_failure(fails):
+    bot = build_bot(replace(CONFIG, lmstudio_auto_init=True))
+    initialize = AsyncMock(return_value="correcto")
+    if fails:
+        initialize.side_effect = InitializationError("apagado")
+    bot.initializer = SimpleNamespace(initialize=initialize)
+    bot.tree.sync = AsyncMock(return_value=[])
+    await bot.setup_hook()
+    initialize.assert_awaited_once()
